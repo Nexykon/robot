@@ -285,10 +285,8 @@ class TradingBotGUI(QMainWindow):
         self.plot_button.clicked.connect(lambda: plot_price_data(self.trading_pair_combo.currentText()))
         layout.addWidget(self.plot_button, 1, 3)
 
-def show_about(self):
+    def show_about(self):
         QMessageBox.information(self, "O programu", "Trgovalni bot\nRazvijalec: Vaše ime\nVerzija: 1.0")
-
-def show_about(self):
         about_msg = QMessageBox()
         about_msg.setWindowTitle("About")
         about_msg.setText("Trading Bot - v1.0\nDeveloped by YourName")
