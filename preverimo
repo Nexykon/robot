@@ -1,3 +1,5 @@
+import sys
+sys.path.append('C:\\Users\\nexon\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python311\\site-packages')
 import ccxt
 import re
 import time
@@ -10,7 +12,7 @@ import threading
 import matplotlib.pyplot as plt
 from PyQt5.QtWidgets import QApplication, QMainWindow, QMenu, QMenuBar, QAction, QLabel, QComboBox, QPushButton, QVBoxLayout, QWidget, QGridLayout, QMessageBox
 import logging
-import sys
+
 
 __all__ = ['exchange_instances', 'check_account_balance']
 
@@ -56,7 +58,6 @@ trading_pairs = ['BTC/USDT', 'ETH/USDT']
 stop_trading = False
 
 def read_unread_emails(email_address, email_password):
-    print("Received email content:", body)
     try:
         client = imaplib.IMAP4_SSL('imap.gmail.com', 993)
         client.login(email_address, email_password)
@@ -85,13 +86,15 @@ def read_unread_emails(email_address, email_password):
                 stop_loss_percent = float(stop_loss_percent_match.group(1))
                 take_profit_percent = float(take_profit_percent_match.group(1))
                 alerts.append((trading_pair, side, stop_loss_percent, take_profit_percent))
-                
+        # Initialize the body variable outside the for loop
+        body = ''
         return alerts
     except Exception as e:
         logging.error(f"Error: {e}")
         return []
     finally:
         client.logout()
+
 
 def check_tradingview_alerts():
     email_address = email_credentials['email_address']
@@ -322,4 +325,3 @@ if __name__ == "__main__":
     trading_bot_gui = TradingBotGUI()
     trading_bot_gui.show()
     sys.exit(app.exec_())
-
