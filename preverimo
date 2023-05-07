@@ -68,7 +68,7 @@ def read_unread_emails(email_address, email_password):
             typ, raw_msg = client.fetch(msg_id, '(BODY[])')
             msg = email.message_from_bytes(raw_msg[0][1])
             body = msg.get_payload()
-
+            
             symbol_pattern = r'"symbol":\s*"([^"]+)"'
             side_pattern = r'"side":\s*"([^"]+)"'
             stop_loss_percent_pattern = r'"stop_loss_percent":\s*([\d.]+)'
@@ -223,7 +223,7 @@ def main_loop():
         except Exception as e:
             logging.error(f"Error in main loop: {e}")
             time.sleep(60)
-            
+
 class TradingBotGUI(QMainWindow):
     def __init__(self, parent=None):
         super(TradingBotGUI, self).__init__(parent)
