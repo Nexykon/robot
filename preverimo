@@ -1,0 +1,350 @@
+import ccxt
+import re
+import time
+import imaplib
+import email
+import csv
+import os
+import json
+import threading
+import matplotlib.pyplot as plt
+from PyQt5.QtWidgets import QApplication, QMainWindow, QMenu, QMenuBar, QAction, QLabel, QComboBox, QPushButton, QVBoxLayout, QWidget, QGridLayout, QMessageBox
+import logging
+import sys
+
+__all__ = ['exchange_instances', 'check_account_balance']
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(filename='C:\\Python\\trading_bot\\logs\\trading_bot.log', mode='w'),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+with open('C:\\Python\\trading_bot\\api_keys.json') as f:
+    api_key_data_list = json.load(f)
+with open('C:\\Python\\trading_bot\\email_credentials.json') as f:
+    email_credentials = json.load(f)
+with open('C:\\Python\\trading_bot\\config.json') as f:
+    config = json.load(f)
+
+timeframe = config['timeframe']
+limit = config['limit']
+percentage = config['percentage']
+leverage = config['leverage']
+
+def sync_exchange_time(exchange):
+    exchange.load_time_difference()
+
+exchange_instances = [getattr(ccxt, api_key_data['exchange_id'])({
+    'apiKey': api_key_data['api_key'],
+    'secret': api_key_data['api_secret'],
+    'timeout': 30000,
+    'enableRateLimit': True,
+    'options': {'recvWindow': 60000},
+}) for api_key_data in api_key_data_list]
+
+# Sync exchange time
+for exchange in exchange_instances:
+    sync_exchange_time(exchange)
+
+
+trading_pairs = ['BTC/USDT', 'ETH/USDT']
+
+stop_trading = False
+
+def read_unread_emails(email_address, email_password):
+    print("Received email content:", body)
+    try:
+        client = imaplib.IMAP4_SSL('imap.gmail.com', 993)
+        client.login(email_address, email_password)
+        client.select('INBOX')
+        typ, messages = client.search(None, 'UNSEEN')
+        alerts = []
+        for msg_id in messages[0].split():
+            logging.info(f"Processing email with ID: {msg_id}")
+            typ, raw_msg = client.fetch(msg_id, '(BODY[])')
+            msg = email.message_from_bytes(raw_msg[0][1])
+            body = msg.get_payload()
+
+            symbol_pattern = r'"symbol":\s*"([^"]+)"'
+            side_pattern = r'"side":\s*"([^"]+)"'
+            stop_loss_percent_pattern = r'"stop_loss_percent":\s*([\d.]+)'
+            take_profit_percent_pattern = r'"take_profit_percent":\s*([\d.]+)'
+
+            symbol_match = re.search(symbol_pattern, body)
+            side_match = re.search(side_pattern, body)
+            stop_loss_percent_match = re.search(stop_loss_percent_pattern, body)
+            take_profit_percent_match = re.search(take_profit_percent_pattern, body)
+
+            if symbol_match and side_match and stop_loss_percent_match and take_profit_percent_match:
+                trading_pair = symbol_match.group(1)
+                side = side_match.group(1).lower()
+                stop_loss_percent = float(stop_loss_percent_match.group(1))
+                take_profit_percent = float(take_profit_percent_match.group(1))
+                alerts.append((trading_pair, side, stop_loss_percent, take_profit_percent))
+                
+                for alert in alerts:
+                 print(alert)
+
+        return alerts
+    except Exception as e:
+        logging.error(f"Error: {e}")
+        return []
+    finally:
+        client.logout()
+
+def check_tradingview_alerts():
+    email_address = email_credentials['email_address']
+    email_password = email_credentials['email_password']
+
+    return read_unread_emails(email_address, email_password)
+
+def log_trade(timestamp, trading_pair, signal, price):
+    filename = 'trade_history.csv'
+    file_exists = os.path.isfile(filename)
+
+    with open(filename, 'a', newline='') as csvfile:
+        headers = ['timestamp', 'trading_pair', 'signal', 'price']
+        writer = csv.DictWriter(csvfile, delimiter=',', lineterminator='\n', fieldnames=headers)
+
+        if not file_exists:
+            writer.writeheader()
+
+        writer.writerow({'timestamp': timestamp, 'trading_pair': trading_pair, 'signal': signal, 'price': price})
+
+def plot_price_data(trading_pair):
+    binance_instance = exchange_instances[0]  # Use the first Binance account for data retrieval
+    timeframe = '30m'  # Timeframe for data collection
+    limit = 100  # Number of candles in the data
+
+    price_data = binance_instance.fetch_ohlcv(trading_pair, timeframe, limit=limit)
+    timestamps, open_prices, high_prices, low_prices, close_prices, volumes = zip(*price_data)
+
+    # Convert timestamps to appropriate format
+    timestamps = [time.strftime('%Y-%m-%d %H:%M', time.localtime(ts // 1000)) for ts in timestamps]
+
+    plt.plot(timestamps, close_prices)
+    plt.xticks(rotation=45)
+    plt.title(f'{trading_pair} Price')
+    plt.xlabel('Timestamp')
+    plt.ylabel('Price')
+    plt.show()
+
+def get_binance_futures_usdt_balance(exchange_instance):
+    try:
+        balance = exchange_instance.fetch_balance(params={'type': 'future'})
+        usdt_balance = balance['USDT']['total']
+        return usdt_balance
+    except Exception as e:
+        logging.error(f"Error fetching Binance Futures balance: {e}")
+        return 0
+
+def get_usdt_balance(binance_instance):
+    try:
+        balance = binance_instance.fetch_balance()
+        usdt_balance = balance['free']['USDT']
+        return usdt_balance
+    except Exception as e:
+        logging.error(f"Error fetching balance: {e}")
+        return 0
+
+def calculate_order_size(balance, percentage):
+    return balance * (percentage / 100)
+
+def main_loop():
+    print(f"Executing order on {exchange_instance.name} with parameters:")
+    print("Trading pair:", trading_pair)
+    print("Side:", side)
+    print("Stop loss percent:", stop_loss_percent)
+    print("Take profit percent:", take_profit_percent)
+    global stop_trading
+    email_address = email_credentials['email_address']
+    email_password = email_credentials['email_password']
+    while not stop_trading:
+        try:
+            print("Preverjanje e-pošte...")
+            logging.info("Checking email...")
+            alerts = read_unread_emails(email_address, email_password)
+
+            logging.info(f"Received {len(alerts)} alerts: {alerts}")
+            for signal, trading_pair, side, stop_loss_percent, take_profit_percent in alerts:
+
+                for exchange_instance in exchange_instances:
+
+                    for attempt in range(3):  # Set desired number of retries
+                        try:
+                            usdt_balance = get_usdt_balance(exchange_instance)
+                            order_size = calculate_order_size(usdt_balance, 10)  # Set desired percentage of principal
+
+                            if signal == 'long':
+                                print(f'Placing a long trade on {exchange_instance.name} for {trading_pair}')
+                                order = exchange_instance.create_market_buy_order(trading_pair, order_size)
+
+                                # Calculate stop loss and take profit prices
+                                entry_price = float(order['price'])
+                                stop_loss_price = entry_price * (1 - stop_loss_percent)
+                                take_profit_price = entry_price * (1 + take_profit_percent)
+
+                                # Place stop loss and take profit orders
+                                exchange_instance.create_order(trading_pair, 'stop_loss_limit', 'sell', order_size, stop_loss_price, {'stopPrice': stop_loss_price})
+                                exchange_instance.create_order(trading_pair, 'limit', 'sell', order_size, take_profit_price)
+
+                            elif signal == 'short':
+                                print(f'Placing a short trade on {exchange_instance.name} for {trading_pair}')
+                                order = exchange_instance.create_market_sell_order(trading_pair, order_size)
+
+                                # Calculate stop loss and take profit prices
+                                entry_price = float(order['price'])
+                                stop_loss_price = entry_price * (1 + stop_loss_percent)
+                                take_profit_price = entry_price * (1 - take_profit_percent)
+
+                                # Place stop loss and take profit orders
+                                exchange_instance.create_order(trading_pair, 'stop_loss_limit', 'buy', order_size, stop_loss_price, {'stopPrice': stop_loss_price})
+                                exchange_instance.create_order(trading_pair, 'limit', 'buy', order_size, take_profit_price)
+
+                            elif signal == 'close':
+                                print(f'Closing positions on {exchange_instance.name} for {trading_pair}')
+                                order = exchange_instance.create_market_sell_order(trading_pair, order_size, {'reduceOnly': True})
+
+                            timestamp = order['timestamp']
+                            price = order['price']
+                            log_trade(timestamp, trading_pair, signal, price)
+                            break  # Break the retry loop if the request is successful
+
+                        except Exception as e:
+                            logging.error(f"Error working with {exchange_instance.name} instance: {e}")
+                            if attempt < 2:  # Change 2 to one less than the desired number of retries
+                                print("Retrying after 5 seconds...")
+                                logging.info("Retrying after 5 seconds...")
+                                time.sleep(5)
+                            else:
+                                print("Max retries reached. Skipping this trade.")
+                                logging.warning("Max retries reached. Skipping this trade.")
+                                break
+
+            time.sleep(60)
+        except Exception as e:
+            logging.error(f"Error in main loop: {e}")
+            time.sleep(60)
+class TradingBotGUI(QMainWindow):
+    def __init__(self, parent=None):
+        super(TradingBotGUI, self).__init__(parent)
+
+        self.setWindowTitle("Trgovalni Bot")
+
+        # Create menu bar
+        self.create_menu_bar()
+
+        # Create main widget
+        self.main_widget = QWidget()
+        self.setCentralWidget(self.main_widget)
+
+        # Create main layout
+        main_layout = QGridLayout(self.main_widget)
+
+        # Create and set widgets
+        self.create_widgets(main_layout)
+
+    def create_menu_bar(self):
+        menu_bar = self.menuBar()
+
+        file_menu = QMenu("Datoteka", menu_bar)
+        menu_bar.addMenu(file_menu)
+
+        exit_action = QAction("Izhod", self)
+        exit_action.triggered.connect(self.close)
+        file_menu.addAction(exit_action)
+
+        help_menu = QMenu("Pomoč", menu_bar)
+        menu_bar.addMenu(help_menu)
+
+        about_action = QAction("O programu", self)
+        about_action.triggered.connect(self.show_about)
+        help_menu.addAction(about_action)
+
+    def create_widgets(self, layout):
+        # QLabel
+        self.status_label = QLabel("Trgovalni bot se izvaja")
+        layout.addWidget(self.status_label, 0, 0)
+
+        # QComboBox
+        self.trading_pair_combo = QComboBox()
+        self.trading_pair_combo.addItems(trading_pairs)
+        layout.addWidget(self.trading_pair_combo, 1, 0)
+
+        # QPushButton
+        self.start_button = QPushButton("Začni")
+        self.start_button.clicked.connect(start_main_loop)
+        layout.addWidget(self.start_button, 1, 1)
+
+        self.stop_button = QPushButton("Ustavi")
+        self.stop_button.clicked.connect(stop_main_loop)
+        layout.addWidget(self.stop_button, 1, 2)
+
+        self.plot_button = QPushButton("Prikaži graf")
+        self.plot_button.clicked.connect(lambda: plot_price_data(self.trading_pair_combo.currentText()))
+        layout.addWidget(self.plot_button, 1, 3)
+
+def show_about(self):
+        QMessageBox.information(self, "O programu", "Trgovalni bot\nRazvijalec: Vaše ime\nVerzija: 1.0")
+
+def stop_main_loop():
+    trading_bot_gui.status_label.setText("Trgovalni bot se ne izvaja")
+    global stop_trading
+    stop_trading = True
+
+def start_main_loop():
+    trading_pair = trading_bot_gui.trading_pair_combo.currentText()
+    trading_bot_gui.status_label.setText(f"Trgovalni bot se izvaja za {trading_pair}")
+    global stop_trading
+    stop_trading = False
+    main_thread = threading.Thread(target=main_loop)
+    main_thread.start()
+
+def check_account_balance(binance_instance):
+    try:
+        balance = binance_instance.fetch_balance()
+        non_zero_balances = {coin: amount for coin, amount in balance['free'].items() if amount > 0}
+        print("Balance:", non_zero_balances)
+    except Exception as e:
+        print(f"Error fetching balance: {e}")
+
+def create_gui():
+    def on_trading_pair_selected(event):
+        selected_trading_pair.set(combo_trading_pairs.get())
+    
+    root = Tk()
+    root.title("Trading Bot")
+
+    mainframe = ttk.Frame(root, padding="3 3 12 12")
+    mainframe.grid(column=0, row=0, sticky=(N, W, E, S))
+    root.columnconfigure(0, weight=1)
+    root.rowconfigure(0, weight=1)
+
+    ttk.Label(mainframe, text="Trading Bot is running").grid(column=1, row=1, sticky=W)
+
+    ttk.Button(mainframe, text="Start", command=start_main_loop).grid(column=3, row=3, sticky=W)
+    ttk.Button(mainframe, text="Stop", command=stop_main_loop).grid(column=4, row=3, sticky=W)
+
+    # Create a dropdown menu to select a trading pair
+    selected_trading_pair = StringVar()
+    combo_trading_pairs = ttk.Combobox(mainframe, textvariable=selected_trading_pair)
+    combo_trading_pairs['values'] = trading_pairs
+    combo_trading_pairs.grid(column=1, row=3, sticky=W)
+    combo_trading_pairs.current(0)  # Set default selected trading pair
+    combo_trading_pairs.bind("<<ComboboxSelected>>", on_trading_pair_selected)
+
+    ttk.Button(mainframe, text="Show Graph", command=lambda: plot_price_data(selected_trading_pair.get())).grid(column=5, row=3, sticky=W)
+
+    for child in mainframe.winfo_children():
+        child.grid_configure(padx=5, pady=5)
+
+    root.mainloop()
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    trading_bot_gui = TradingBotGUI()
+    trading_bot_gui.show()
+    sys.exit(app.exec_())
