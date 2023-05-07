@@ -288,6 +288,18 @@ class TradingBotGUI(QMainWindow):
 def show_about(self):
         QMessageBox.information(self, "O programu", "Trgovalni bot\nRazvijalec: Vaše ime\nVerzija: 1.0")
 
+def show_about(self):
+        about_msg = QMessageBox()
+        about_msg.setWindowTitle("About")
+        about_msg.setText("Trading Bot - v1.0\nDeveloped by YourName")
+        about_msg.exec()
+        about_action.triggered.connect(self.show_about)
+        about_action = QAction("About", self)
+        about_action.setStatusTip("Show information about the application")
+        about_action.triggered.connect(self.show_about)  # Dodajte to vrstico tukaj
+
+
+
 def stop_main_loop():
     trading_bot_gui.status_label.setText("Trgovalni bot se ne izvaja")
     global stop_trading
