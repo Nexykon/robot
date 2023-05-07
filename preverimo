@@ -152,65 +152,62 @@ def calculate_order_size(balance, percentage):
     return balance * (percentage / 100)
 
 def main_loop():
-    print(f"Executing order on {exchange_instance.name} with parameters:")
-    print("Trading pair:", trading_pair)
-    print("Side:", side)
-    print("Stop loss percent:", stop_loss_percent)
-    print("Take profit percent:", take_profit_percent)
     global stop_trading
     email_address = email_credentials['email_address']
     email_password = email_credentials['email_password']
     while not stop_trading:
         try:
             print("Preverjanje e-pošte...")
-            logging.info("Checking email...")
+            logging.info("Preverjanje e-pošte...")
             alerts = read_unread_emails(email_address, email_password)
 
-            logging.info(f"Received {len(alerts)} alerts: {alerts}")
+            logging.info(f"Prejeli ste {len(alerts)} opozoril: {alerts}")
             for signal, trading_pair, side, stop_loss_percent, take_profit_percent in alerts:
+                for exchange_instance in exchange_instances:
+                    sync_exchange_time(exchange_instance)
+                    print(f"Izvajanje naročila na {exchange_instance.name} z naslednjimi parametri:")
+                    print("Poselovanje valutni par:", trading_pair)
+                    print("Stranski položaj:", side)
+                    print("Odstotek za zaustavitev izgube:", stop_loss_percent)
+                    print("Odstotek za dobiček:", take_profit_percent)
 
                 for exchange_instance in exchange_instances:
-
-                    for attempt in range(3):  # Set desired number of retries
+                    for attempt in range(3):
                         try:
                             usdt_balance = get_usdt_balance(exchange_instance)
-                            order_size = calculate_order_size(usdt_balance, 10)  # Set desired percentage of principal
+                            order_size = calculate_order_size(usdt_balance, 10)
 
                             if signal == 'long':
-                                print(f'Placing a long trade on {exchange_instance.name} for {trading_pair}')
+                                print(f'Kupujem na {exchange_instance.name} za valutni par {trading_pair}')
                                 order = exchange_instance.create_market_buy_order(trading_pair, order_size)
 
-                                # Calculate stop loss and take profit prices
                                 entry_price = float(order['price'])
                                 stop_loss_price = entry_price * (1 - stop_loss_percent)
                                 take_profit_price = entry_price * (1 + take_profit_percent)
 
-                                # Place stop loss and take profit orders
                                 exchange_instance.create_order(trading_pair, 'stop_loss_limit', 'sell', order_size, stop_loss_price, {'stopPrice': stop_loss_price})
                                 exchange_instance.create_order(trading_pair, 'limit', 'sell', order_size, take_profit_price)
 
                             elif signal == 'short':
-                                print(f'Placing a short trade on {exchange_instance.name} for {trading_pair}')
+                                print(f'Prodajam na {exchange_instance.name} za valutni par {trading_pair}')
                                 order = exchange_instance.create_market_sell_order(trading_pair, order_size)
 
-                                # Calculate stop loss and take profit prices
                                 entry_price = float(order['price'])
                                 stop_loss_price = entry_price * (1 + stop_loss_percent)
                                 take_profit_price = entry_price * (1 - take_profit_percent)
 
-                                # Place stop loss and take profit orders
                                 exchange_instance.create_order(trading_pair, 'stop_loss_limit', 'buy', order_size, stop_loss_price, {'stopPrice': stop_loss_price})
                                 exchange_instance.create_order(trading_pair, 'limit', 'buy', order_size, take_profit_price)
 
                             elif signal == 'close':
-                                print(f'Closing positions on {exchange_instance.name} for {trading_pair}')
+                                print(f'Zapiram pozicijo na {exchange_instance.name} za valutni par {trading_pair}')
                                 order = exchange_instance.create_market_sell_order(trading_pair, order_size, {'reduceOnly': True})
 
                             timestamp = order['timestamp']
                             price = order['price']
                             log_trade(timestamp, trading_pair, signal, price)
-                            break  # Break the retry loop if the request is successful
-
+                            break
+                        
                         except Exception as e:
                             logging.error(f"Error working with {exchange_instance.name} instance: {e}")
                             if attempt < 2:  # Change 2 to one less than the desired number of retries
@@ -226,6 +223,7 @@ def main_loop():
         except Exception as e:
             logging.error(f"Error in main loop: {e}")
             time.sleep(60)
+            
 class TradingBotGUI(QMainWindow):
     def __init__(self, parent=None):
         super(TradingBotGUI, self).__init__(parent)
@@ -324,3 +322,4 @@ if __name__ == "__main__":
     trading_bot_gui = TradingBotGUI()
     trading_bot_gui.show()
     sys.exit(app.exec_())
+
