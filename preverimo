@@ -86,9 +86,6 @@ def read_unread_emails(email_address, email_password):
                 take_profit_percent = float(take_profit_percent_match.group(1))
                 alerts.append((trading_pair, side, stop_loss_percent, take_profit_percent))
                 
-                for alert in alerts:
-                 print(alert)
-
         return alerts
     except Exception as e:
         logging.error(f"Error: {e}")
@@ -312,37 +309,6 @@ def check_account_balance(binance_instance):
     except Exception as e:
         print(f"Error fetching balance: {e}")
 
-def create_gui():
-    def on_trading_pair_selected(event):
-        selected_trading_pair.set(combo_trading_pairs.get())
-    
-    root = Tk()
-    root.title("Trading Bot")
-
-    mainframe = ttk.Frame(root, padding="3 3 12 12")
-    mainframe.grid(column=0, row=0, sticky=(N, W, E, S))
-    root.columnconfigure(0, weight=1)
-    root.rowconfigure(0, weight=1)
-
-    ttk.Label(mainframe, text="Trading Bot is running").grid(column=1, row=1, sticky=W)
-
-    ttk.Button(mainframe, text="Start", command=start_main_loop).grid(column=3, row=3, sticky=W)
-    ttk.Button(mainframe, text="Stop", command=stop_main_loop).grid(column=4, row=3, sticky=W)
-
-    # Create a dropdown menu to select a trading pair
-    selected_trading_pair = StringVar()
-    combo_trading_pairs = ttk.Combobox(mainframe, textvariable=selected_trading_pair)
-    combo_trading_pairs['values'] = trading_pairs
-    combo_trading_pairs.grid(column=1, row=3, sticky=W)
-    combo_trading_pairs.current(0)  # Set default selected trading pair
-    combo_trading_pairs.bind("<<ComboboxSelected>>", on_trading_pair_selected)
-
-    ttk.Button(mainframe, text="Show Graph", command=lambda: plot_price_data(selected_trading_pair.get())).grid(column=5, row=3, sticky=W)
-
-    for child in mainframe.winfo_children():
-        child.grid_configure(padx=5, pady=5)
-
-    root.mainloop()
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     trading_bot_gui = TradingBotGUI()
