@@ -1,5 +1,3 @@
-import sys
-sys.path.append('C:\\Users\\nexon\\AppData\\Local\\Packages\\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\\LocalCache\\local-packages\\Python311\\site-packages')
 import ccxt
 import re
 import time
@@ -10,9 +8,10 @@ import os
 import json
 import threading
 import matplotlib.pyplot as plt
-from PyQt5.QtWidgets import QApplication, QMainWindow, QMenu, QMenuBar, QAction, QLabel, QComboBox, QPushButton, QVBoxLayout, QWidget, QGridLayout, QMessageBox
+from tkinter import *
+from tkinter import ttk
 import logging
-
+import sys
 
 __all__ = ['exchange_instances', 'check_account_balance']
 
@@ -24,6 +23,7 @@ logging.basicConfig(
         logging.StreamHandler(sys.stdout)
     ]
 )
+
 
 with open('C:\\Python\\trading_bot\\api_keys.json') as f:
     api_key_data_list = json.load(f)
@@ -68,8 +68,9 @@ def read_unread_emails(email_address, email_password):
             logging.info(f"Processing email with ID: {msg_id}")
             typ, raw_msg = client.fetch(msg_id, '(BODY[])')
             msg = email.message_from_bytes(raw_msg[0][1])
-            body = msg.get_payload()
-            
+            body = msg.get_body(msg)
+            print("Received email content:", body)
+
             symbol_pattern = r'"symbol":\s*"([^"]+)"'
             side_pattern = r'"side":\s*"([^"]+)"'
             stop_loss_percent_pattern = r'"stop_loss_percent":\s*([\d.]+)'
@@ -86,14 +87,24 @@ def read_unread_emails(email_address, email_password):
                 stop_loss_percent = float(stop_loss_percent_match.group(1))
                 take_profit_percent = float(take_profit_percent_match.group(1))
                 alerts.append((trading_pair, side, stop_loss_percent, take_profit_percent))
-        # Initialize the body variable outside the for loop
-        body = ''
+                
+                for alert in alerts:
+                 print(alert)
+
         return alerts
     except Exception as e:
         logging.error(f"Error: {e}")
         return []
     finally:
         client.logout()
+
+def get_email_body(msg):
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_type() == "text/plain":
+                return part.get_payload()
+    else:
+        return msg.get_payload()
 
 
 def check_tradingview_alerts():
@@ -227,86 +238,11 @@ def main_loop():
             logging.error(f"Error in main loop: {e}")
             time.sleep(60)
 
-class TradingBotGUI(QMainWindow):
-    def __init__(self, parent=None):
-        super(TradingBotGUI, self).__init__(parent)
-
-        self.setWindowTitle("Trgovalni Bot")
-
-        # Create menu bar
-        self.create_menu_bar()
-
-        # Create main widget
-        self.main_widget = QWidget()
-        self.setCentralWidget(self.main_widget)
-
-        # Create main layout
-        main_layout = QGridLayout(self.main_widget)
-
-        # Create and set widgets
-        self.create_widgets(main_layout)
-
-    def create_menu_bar(self):
-        menu_bar = self.menuBar()
-
-        file_menu = QMenu("Datoteka", menu_bar)
-        menu_bar.addMenu(file_menu)
-
-        exit_action = QAction("Izhod", self)
-        exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
-
-        help_menu = QMenu("Pomoč", menu_bar)
-        menu_bar.addMenu(help_menu)
-
-        about_action = QAction("O programu", self)
-        about_action.triggered.connect(self.show_about)
-        help_menu.addAction(about_action)
-
-    def create_widgets(self, layout):
-        # QLabel
-        self.status_label = QLabel("Trgovalni bot se izvaja")
-        layout.addWidget(self.status_label, 0, 0)
-
-        # QComboBox
-        self.trading_pair_combo = QComboBox()
-        self.trading_pair_combo.addItems(trading_pairs)
-        layout.addWidget(self.trading_pair_combo, 1, 0)
-
-        # QPushButton
-        self.start_button = QPushButton("Začni")
-        self.start_button.clicked.connect(start_main_loop)
-        layout.addWidget(self.start_button, 1, 1)
-
-        self.stop_button = QPushButton("Ustavi")
-        self.stop_button.clicked.connect(stop_main_loop)
-        layout.addWidget(self.stop_button, 1, 2)
-
-        self.plot_button = QPushButton("Prikaži graf")
-        self.plot_button.clicked.connect(lambda: plot_price_data(self.trading_pair_combo.currentText()))
-        layout.addWidget(self.plot_button, 1, 3)
-
-    def show_about(self):
-        QMessageBox.information(self, "O programu", "Trgovalni bot\nRazvijalec: Vaše ime\nVerzija: 1.0")
-        about_msg = QMessageBox()
-        about_msg.setWindowTitle("About")
-        about_msg.setText("Trading Bot - v1.0\nDeveloped by YourName")
-        about_msg.exec()
-        about_action.triggered.connect(self.show_about)
-        about_action = QAction("About", self)
-        about_action.setStatusTip("Show information about the application")
-        about_action.triggered.connect(self.show_about)  # Dodajte to vrstico tukaj
-
-
-
 def stop_main_loop():
-    trading_bot_gui.status_label.setText("Trgovalni bot se ne izvaja")
     global stop_trading
     stop_trading = True
 
 def start_main_loop():
-    trading_pair = trading_bot_gui.trading_pair_combo.currentText()
-    trading_bot_gui.status_label.setText(f"Trgovalni bot se izvaja za {trading_pair}")
     global stop_trading
     stop_trading = False
     main_thread = threading.Thread(target=main_loop)
@@ -320,9 +256,43 @@ def check_account_balance(binance_instance):
     except Exception as e:
         print(f"Error fetching balance: {e}")
 
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    trading_bot_gui = TradingBotGUI()
-    trading_bot_gui.show()
-    sys.exit(app.exec_())
+def create_gui():
+    def on_trading_pair_selected(event):
+        selected_trading_pair.set(combo_trading_pairs.get())
     
+    root = Tk()
+    root.title("Trading Bot")
+
+    mainframe = ttk.Frame(root, padding="3 3 12 12")
+    mainframe.grid(column=0, row=0, sticky=(N, W, E, S))
+    root.columnconfigure(0, weight=1)
+    root.rowconfigure(0, weight=1)
+
+    ttk.Label(mainframe, text="Trading Bot is running").grid(column=1, row=1, sticky=W)
+
+    ttk.Button(mainframe, text="Start", command=start_main_loop).grid(column=3, row=3, sticky=W)
+    ttk.Button(mainframe, text="Stop", command=stop_main_loop).grid(column=4, row=3, sticky=W)
+
+    # Create a dropdown menu to select a trading pair
+    selected_trading_pair = StringVar()
+    combo_trading_pairs = ttk.Combobox(mainframe, textvariable=selected_trading_pair)
+    combo_trading_pairs['values'] = trading_pairs
+    combo_trading_pairs.grid(column=1, row=3, sticky=W)
+    combo_trading_pairs.current(0)  # Set default selected trading pair
+    combo_trading_pairs.bind("<<ComboboxSelected>>", on_trading_pair_selected)
+
+    ttk.Button(mainframe, text="Show Graph", command=lambda: plot_price_data(selected_trading_pair.get())).grid(column=5, row=3, sticky=W)
+
+    for child in mainframe.winfo_children():
+        child.grid_configure(padx=5, pady=5)
+
+    root.mainloop()
+if __name__ == "__main__":
+    for i, instance in enumerate(exchange_instances):
+        try:
+            print(f"Account {i + 1}:")
+            futures_usdt_balance = get_binance_futures_usdt_balance(instance)
+            print("Futures USDT Balance:", futures_usdt_balance)
+        except Exception as e:
+            logging.error(f"Error checking account balance: {e}")
+    create_gui()
