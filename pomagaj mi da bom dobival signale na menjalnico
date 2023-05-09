@@ -57,18 +57,30 @@ trading_pairs = ['BTC/USDT', 'ETH/USDT']
 
 stop_trading = False
 
+def get_email_body(msg):
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_type() == "text/plain":
+                return part.get_payload(decode=True).decode()
+    else:
+        return msg.get_payload(decode=True).decode()
+
 def read_unread_emails(email_address, email_password):
     try:
-        client = imaplib.IMAP4_SSL('imap.gmail.com', 993)
+        client = imaplib.IMAP4_SSL("imap.gmail.com")
         client.login(email_address, email_password)
-        client.select('INBOX')
-        typ, messages = client.search(None, 'UNSEEN')
+        client.select("inbox")
+
+        _, messages = client.search(None, 'UNSEEN')
+        messages = messages[0].split()
+
         alerts = []
-        for msg_id in messages[0].split():
-            logging.info(f"Processing email with ID: {msg_id}")
-            typ, raw_msg = client.fetch(msg_id, '(BODY[])')
+
+        for msg_id in messages:
+            _, raw_msg = client.fetch(msg_id, "(RFC822)")
             msg = email.message_from_bytes(raw_msg[0][1])
-            body = msg.get_body(msg)
+
+            body = get_email_body(msg)
             print("Received email content:", body)
 
             symbol_pattern = r'"symbol":\s*"([^"]+)"'
@@ -90,21 +102,14 @@ def read_unread_emails(email_address, email_password):
                 
                 for alert in alerts:
                  print(alert)
-
+                 alerts.append(body)
+                 
         return alerts
     except Exception as e:
         logging.error(f"Error: {e}")
         return []
     finally:
         client.logout()
-
-def get_email_body(msg):
-    if msg.is_multipart():
-        for part in msg.walk():
-            if part.get_content_type() == "text/plain":
-                return part.get_payload()
-    else:
-        return msg.get_payload()
 
 
 def check_tradingview_alerts():
