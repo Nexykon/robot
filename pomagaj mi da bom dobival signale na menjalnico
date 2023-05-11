@@ -13,6 +13,10 @@ from tkinter import ttk
 import logging
 import sys
 
+from binance.client import Client as BinanceClient
+import bybit
+
+
 __all__ = ['exchange_instances', 'check_account_balance']
 
 logging.basicConfig(
@@ -38,24 +42,116 @@ percentage = config['percentage']
 leverage = config['leverage']
 
 def sync_exchange_time(exchange):
-    exchange.load_time_difference()
+    if hasattr(exchange, 'load_time_difference'):
+        exchange.load_time_difference()
+    else:
+        print(f"{type(exchange).__name__} nima funkcije 'load_time_difference'.")
 
-exchange_instances = [getattr(ccxt, api_key_data['exchange_id'])({
-    'apiKey': api_key_data['api_key'],
-    'secret': api_key_data['api_secret'],
-    'timeout': 30000,
-    'enableRateLimit': True,
-    'options': {'recvWindow': 60000},
-}) for api_key_data in api_key_data_list]
+
+exchange_instances = []
+
+for api_key_data in api_key_data_list:
+    if api_key_data["exchange_id"] == "binance":
+        binance_instance = BinanceClient(api_key_data["api_key"], api_key_data["api_secret"])
+        exchange_instances.append(binance_instance)
+
+    elif api_key_data["exchange_id"] == "bybit":
+        bybit_instance = bybit.bybit(test=False, api_key=api_key_data["api_key"], api_secret=api_key_data["api_secret"])
+        exchange_instances.append(bybit_instance)
+
+    else:
+        instance = getattr(ccxt, api_key_data["exchange_id"])({
+            "apiKey": api_key_data["api_key"],
+            "secret": api_key_data["api_secret"],
+            "timeout": 30000,
+            "enableRateLimit": True,
+            "options": {"recvWindow": 60000},
+        })
+        exchange_instances.append(instance)
 
 # Sync exchange time
 for exchange in exchange_instances:
     sync_exchange_time(exchange)
 
 
+
 trading_pairs = ['BTC/USDT', 'ETH/USDT']
 
 stop_trading = False
+
+def execute_trade(exchange_instance, signal, trading_pair, order_size, stop_loss_percent, take_profit_percent):
+    try:
+        if signal == 'long':
+            print(f'Kupujem na {exchange_instance.name} za valutni par {trading_pair}')
+            order = exchange_instance.create_market_buy_order(trading_pair, order_size)
+
+            entry_price = float(order['price'])
+            stop_loss_price = entry_price * (1 - stop_loss_percent / 100)
+            take_profit_price = entry_price * (1 + take_profit_percent / 100)
+
+            exchange_instance.create_order(trading_pair, 'limit', 'sell', order_size, take_profit_price)
+            exchange_instance.create_order(trading_pair, 'stop_loss', 'sell', order_size, stop_loss_price)
+
+        elif signal == 'short':
+            print(f'Prodajem na {exchange_instance.name} za valutni par {trading_pair}')
+            order = exchange_instance.create_market_sell_order(trading_pair, order_size)
+
+            entry_price = float(order['price'])
+            stop_loss_price = entry_price * (1 + stop_loss_percent / 100)
+            take_profit_price = entry_price * (1 - take_profit_percent / 100)
+
+            exchange_instance.create_order(trading_pair, 'limit', 'buy', order_size, take_profit_price)
+            exchange_instance.create_order(trading_pair, 'stop_loss', 'buy', order_size, stop_loss_price)
+
+        print(f'Naročilo za {signal} izvedeno uspešno!')
+
+    except Exception as e:
+        print(f'Napaka pri izvedbi naročila: {e}')
+        return None
+
+# Preberi naročila iz seznama opozoril
+for signal, trading_pair, side, stop_loss_percent, take_profit_percent in alerts:
+
+    # Uporabi funkcijo execute_trade za izvedbo naročil
+ def execute_trade(exchange_instance, signal, trading_pair, order_size, stop_loss_percent, take_profit_percent):   
+    for exchange_instance, signal, trading_pair, order_size, stop_loss_percent, take_profit_percent in alerts:
+     execute_trade(exchange_instance, signal, trading_pair, order_size, stop_loss_percent, take_profit_percent)
+
+
+def create_binance_order(exchange, symbol, side, order_type, amount, price=None):
+    if order_type == 'market':
+        if side == 'buy':
+            order = exchange.create_market_buy_order(symbol, amount)
+        else:
+            order = exchange.create_market_sell_order(symbol, amount)
+    else:
+        if side == 'buy':
+            order = exchange.create_limit_buy_order(symbol, amount, price)
+        else:
+            order = exchange.create_limit_sell_order(symbol, amount, price)
+
+    return order
+
+def create_bybit_order(exchange, symbol, side, order_type, amount, price=None):
+    if order_type == 'market':
+        order = exchange.place_active_order(
+            side=side.upper(),
+            symbol=symbol.replace('/', ''),
+            order_type=order_type.upper(),
+            qty=amount,
+            time_in_force='GTC'
+        )
+    else:
+        order = exchange.place_active_order(
+            side=side.upper(),
+            symbol=symbol.replace('/', ''),
+            order_type=order_type.upper(),
+            qty=amount,
+            price=price,
+            time_in_force='GTC'
+        )
+
+    return order
 
 def get_email_body(msg):
     if msg.is_multipart():
