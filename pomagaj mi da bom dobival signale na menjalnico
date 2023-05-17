@@ -12,10 +12,9 @@ from tkinter import *
 from tkinter import ttk
 import logging
 import sys
-
-from binance.client import Client as BinanceClient
-import bybit
-
+import re
+import time
+from email import message_from_bytes
 
 __all__ = ['exchange_instances', 'check_account_balance']
 
@@ -29,10 +28,30 @@ logging.basicConfig(
 )
 
 
+def sync_exchange_time(exchange_instance):
+    """Synchronize time with the Binance server"""
+    try:
+        exchange_time = exchange_instance.fetch_time()
+        after = int(time.time() * 1000)
+        diff = after - exchange_time
+        if diff < -1000 or diff > 1000:
+            print('Exchange time is out of sync, synchronizing...')
+            ccxt.binance.options['adjustForTimeDifference'] = True
+        else:
+            print('Exchange time is in sync.')
+    except Exception as e:
+        print(f'Failed to synchronize time with exchange: {e}')
+
+
+
+print("Loading API keys...")
 with open('C:\\Python\\trading_bot\\api_keys.json') as f:
     api_key_data_list = json.load(f)
+print("Loaded API keys: ", api_key_data_list)
+
 with open('C:\\Python\\trading_bot\\email_credentials.json') as f:
     email_credentials = json.load(f)
+
 with open('C:\\Python\\trading_bot\\config.json') as f:
     config = json.load(f)
 
@@ -40,83 +59,90 @@ timeframe = config['timeframe']
 limit = config['limit']
 percentage = config['percentage']
 leverage = config['leverage']
+ 
 
-def sync_exchange_time(exchange):
-    if hasattr(exchange, 'load_time_difference'):
-        exchange.load_time_difference()
-    else:
-        print(f"{type(exchange).__name__} nima funkcije 'load_time_difference'.")
-
-
-exchange_instances = []
-
-for api_key_data in api_key_data_list:
-    if api_key_data["exchange_id"] == "binance":
-        binance_instance = BinanceClient(api_key_data["api_key"], api_key_data["api_secret"])
-        exchange_instances.append(binance_instance)
-
-    elif api_key_data["exchange_id"] == "bybit":
-        bybit_instance = bybit.bybit(test=False, api_key=api_key_data["api_key"], api_secret=api_key_data["api_secret"])
-        exchange_instances.append(bybit_instance)
-
-    else:
-        instance = getattr(ccxt, api_key_data["exchange_id"])({
-            "apiKey": api_key_data["api_key"],
-            "secret": api_key_data["api_secret"],
-            "timeout": 30000,
-            "enableRateLimit": True,
-            "options": {"recvWindow": 60000},
-        })
-        exchange_instances.append(instance)
-
-# Sync exchange time
-for exchange in exchange_instances:
-    sync_exchange_time(exchange)
+print("Creating exchange instances...")
+exchange_instances = [getattr(ccxt, api_key_data['exchange_id'])({
+    'apiKey': api_key_data['api_key'],
+    'secret': api_key_data['api_secret'],
+    'timeout': 30000,
+    'enableRateLimit': True,
+    'options': {
+        'recvWindow': 60000,
+        'defaultType': 'future',  # To je ključno, da se povežete z Binance Futures API.
+    },
+}) for api_key_data in api_key_data_list if 'exchange_id' in api_key_data]
+print("Created exchange instances: ", exchange_instances)
 
 
+def get_trading_pairs(exchange_instance):
+    try:
+        markets = exchange_instance.load_markets()
+        print("Loaded markets: ", markets)
+        usdt_pairs = [pair for pair in markets.keys() if 'USDT' in pair and markets[pair]['active']]
+        print("USDT pairs: ", usdt_pairs)
+        return usdt_pairs
+    except Exception as e:
+        print(f"Error fetching trading pairs: {e}")
+        return []
 
-trading_pairs = ['BTC/USDT', 'ETH/USDT']
-
-stop_trading = False
+# Uporaba funkcije za pridobitev trgovalnih parov
+if exchange_instances:
+    trading_pairs = get_trading_pairs(exchange_instances[0])
+    print("Trading pairs: ", trading_pairs)
+else:
+    # Izvedite ustrezno obdelavo ali izpišite sporočilo o napaki
+    print("Seznam exchange_instances je prazen.")
 
 def execute_trade(exchange_instance, signal, trading_pair, order_size, stop_loss_percent, take_profit_percent):
     try:
-        if signal == 'long':
+        # Preverite veljavnost vhodnih podatkov
+        if not isinstance(exchange_instance, ccxt.Exchange):
+            print("Napaka: Neveljavna instanca borze.")
+            return None
+        if signal.lower() not in ['buy', 'sell']:
+            print("Napaka: Signal mora biti 'buy' ali 'sell'.")
+            return None
+        if not isinstance(trading_pair, str) or '/' not in trading_pair:
+            print("Napaka: Neveljaven trgovalni par.")
+            return None
+        if not (0 < stop_loss_percent < 1 and 0 < take_profit_percent < 1):
+            print("Napaka: Stop loss in take profit morata biti med 0 in 1.")
+            return None
+        
+        if signal.lower() == 'buy':
             print(f'Kupujem na {exchange_instance.name} za valutni par {trading_pair}')
             order = exchange_instance.create_market_buy_order(trading_pair, order_size)
 
             entry_price = float(order['price'])
-            stop_loss_price = entry_price * (1 - stop_loss_percent / 100)
-            take_profit_price = entry_price * (1 + take_profit_percent / 100)
+            stop_loss_price = entry_price * (1 - stop_loss_percent)
+            take_profit_price = entry_price * (1 + take_profit_percent)
 
+            exchange_instance.create_order(trading_pair, 'stop_loss_limit', 'sell', order_size, stop_loss_price, {'stopPrice': stop_loss_price})
             exchange_instance.create_order(trading_pair, 'limit', 'sell', order_size, take_profit_price)
-            exchange_instance.create_order(trading_pair, 'stop_loss', 'sell', order_size, stop_loss_price)
 
-        elif signal == 'short':
-            print(f'Prodajem na {exchange_instance.name} za valutni par {trading_pair}')
+        elif signal.lower() == 'sell':
+            print(f'Prodajam na {exchange_instance.name} za valutni par {trading_pair}')
             order = exchange_instance.create_market_sell_order(trading_pair, order_size)
 
             entry_price = float(order['price'])
-            stop_loss_price = entry_price * (1 + stop_loss_percent / 100)
-            take_profit_price = entry_price * (1 - take_profit_percent / 100)
+            stop_loss_price = entry_price * (1 + stop_loss_percent)
+            take_profit_price = entry_price * (1 - take_profit_percent)
 
+            exchange_instance.create_order(trading_pair, 'stop_loss_limit', 'buy', order_size, stop_loss_price, {'stopPrice': stop_loss_price})
             exchange_instance.create_order(trading_pair, 'limit', 'buy', order_size, take_profit_price)
-            exchange_instance.create_order(trading_pair, 'stop_loss', 'buy', order_size, stop_loss_price)
-
+        
+        print(f"Executing trade: {signal} {trading_pair} {stop_loss_percent} {take_profit_percent}")
         print(f'Naročilo za {signal} izvedeno uspešno!')
 
     except Exception as e:
         print(f'Napaka pri izvedbi naročila: {e}')
         return None
 
-# Preberi naročila iz seznama opozoril
-for signal, trading_pair, side, stop_loss_percent, take_profit_percent in alerts:
 
-    # Uporabi funkcijo execute_trade za izvedbo naročil
- def execute_trade(exchange_instance, signal, trading_pair, order_size, stop_loss_percent, take_profit_percent):   
-    for exchange_instance, signal, trading_pair, order_size, stop_loss_percent, take_profit_percent in alerts:
-     execute_trade(exchange_instance, signal, trading_pair, order_size, stop_loss_percent, take_profit_percent)
-
+total_order_size = 0.01
+stop_loss_percent = 0.009  # 0.9%
+take_profit_percent = 0.004  # 0.4%
 
 def create_binance_order(exchange, symbol, side, order_type, amount, price=None):
     if order_type == 'market':
@@ -161,51 +187,87 @@ def get_email_body(msg):
     else:
         return msg.get_payload(decode=True).decode()
 
+
+from email import message_from_bytes
+
+def parse_email_message(raw_email):
+    parsed_email = message_from_bytes(raw_email)
+    return parsed_email
+
 def read_unread_emails(email_address, email_password):
     try:
         client = imaplib.IMAP4_SSL("imap.gmail.com")
         client.login(email_address, email_password)
         client.select("inbox")
-
-        _, messages = client.search(None, 'UNSEEN')
-        messages = messages[0].split()
-
+        typ, messages = client.search(None, 'UNSEEN')
+        messages = messages[0].split(b' ')
         alerts = []
 
         for msg_id in messages:
-            _, raw_msg = client.fetch(msg_id, "(RFC822)")
-            msg = email.message_from_bytes(raw_msg[0][1])
+            if msg_id == b'':
+                continue
+            typ, msg_data = client.fetch(msg_id, '(RFC822)')
+            raw_email = msg_data[0][1]
+            msg = parse_email_message(raw_email)
 
-            body = get_email_body(msg)
-            print("Received email content:", body)
+            # Get the email body as plain text
+            email_body = ""
+            for part in msg.walk():
+                if part.get_content_type() == "text/plain":
+                    email_body = part.get_payload(decode=True).decode('utf-8')
+                    break
 
-            symbol_pattern = r'"symbol":\s*"([^"]+)"'
-            side_pattern = r'"side":\s*"([^"]+)"'
-            stop_loss_percent_pattern = r'"stop_loss_percent":\s*([\d.]+)'
-            take_profit_percent_pattern = r'"take_profit_percent":\s*([\d.]+)'
+            if not email_body:
+                print("Napaka: E-poštno sporočilo nima vsebine v obliki besedila.")
+                continue
 
-            symbol_match = re.search(symbol_pattern, body)
-            side_match = re.search(side_pattern, body)
-            stop_loss_percent_match = re.search(stop_loss_percent_pattern, body)
-            take_profit_percent_match = re.search(take_profit_percent_pattern, body)
+            # Print email body for debugging
+            print(f"Prebrana vsebina e-pošte: {email_body}")
+            
+            try:
+                email_data = json.loads(email_body)
+            except json.JSONDecodeError:
+                print("Napaka: E-poštno sporočilo ne vsebuje pravilnih JSON podatkov.")
+                continue
 
-            if symbol_match and side_match and stop_loss_percent_match and take_profit_percent_match:
-                trading_pair = symbol_match.group(1)
-                side = side_match.group(1).lower()
-                stop_loss_percent = float(stop_loss_percent_match.group(1))
-                take_profit_percent = float(take_profit_percent_match.group(1))
-                alerts.append((trading_pair, side, stop_loss_percent, take_profit_percent))
-                
-                for alert in alerts:
-                 print(alert)
-                 alerts.append(body)
+            if "symbol" in email_data and "side" in email_data and "stop_loss_percent" in email_data and "take_profit_percent" in email_data:
+                alerts.append((email_data["side"], email_data["symbol"], email_data["side"], float(email_data["stop_loss_percent"]), float(email_data["take_profit_percent"])))
+            else:
+                print("Napaka: E-poštno sporočilo ne vsebuje vseh potrebnih podatkov.")
 
         return alerts
+
     except Exception as e:
         logging.error(f"Error: {e}")
         return []
     finally:
         client.logout()
+
+
+def parse_trading_signal(email):
+    signal_data = {}
+    
+    signal_type_match = re.search(r'(BUY|SELL)', email, re.IGNORECASE)
+    if signal_type_match:
+        signal_data['signal_type'] = signal_type_match.group(1).lower()
+    
+    pairs_match = re.search(r'(\w+?)(USDT\.P)', email)
+    if pairs_match:
+        signal_data['trading_pair'] = pairs_match.group(1) + pairs_match.group(2)
+
+    exchange_match = re.search(r'EXCHANGE\s*:\s*(\w+)', email, re.IGNORECASE)
+    if exchange_match:
+        signal_data['exchange'] = exchange_match.group(1)
+        
+    for field in ['Entry', 'SL']:
+        match = re.search(f'{field}\s*:\s*([\d.]+)', email, re.IGNORECASE)
+        if match:
+            signal_data[field.lower()] = float(match.group(1))
+    
+    signal_data['tp'] = 0.4
+
+    return signal_data
+
 
 
 def check_tradingview_alerts():
@@ -229,7 +291,7 @@ def log_trade(timestamp, trading_pair, signal, price):
 
 def plot_price_data(trading_pair):
     binance_instance = exchange_instances[0]  # Use the first Binance account for data retrieval
-    timeframe = '30m'  # Timeframe for data collection
+    timeframe = '1m'  # Timeframe for data collection
     limit = 100  # Number of candles in the data
 
     price_data = binance_instance.fetch_ohlcv(trading_pair, timeframe, limit=limit)
@@ -266,6 +328,16 @@ def get_usdt_balance(binance_instance):
 def calculate_order_size(balance, percentage):
     return balance * (percentage / 100)
 
+def sync_exchange_time(exchange_instance):
+    try:
+        exchange_time = exchange_instance.fetch_time()
+        local_time = int(time.time() * 1000)
+        time_diff = exchange_time - local_time
+        exchange_instance.options['recvWindow'] = 60000 + time_diff
+    except Exception as e:
+        logging.error(f"Error syncing exchange time: {e}")
+
+
 def main_loop():
     global stop_trading
     email_address = email_credentials['email_address']
@@ -285,59 +357,14 @@ def main_loop():
                     print("Stranski položaj:", side)
                     print("Odstotek za zaustavitev izgube:", stop_loss_percent)
                     print("Odstotek za dobiček:", take_profit_percent)
-
-                for exchange_instance in exchange_instances:
-                    for attempt in range(3):
-                        try:
-                            usdt_balance = get_usdt_balance(exchange_instance)
-                            order_size = calculate_order_size(usdt_balance, 10)
-
-                            if signal == 'long':
-                                print(f'Kupujem na {exchange_instance.name} za valutni par {trading_pair}')
-                                order = exchange_instance.create_market_buy_order(trading_pair, order_size)
-
-                                entry_price = float(order['price'])
-                                stop_loss_price = entry_price * (1 - stop_loss_percent)
-                                take_profit_price = entry_price * (1 + take_profit_percent)
-
-                                exchange_instance.create_order(trading_pair, 'stop_loss_limit', 'sell', order_size, stop_loss_price, {'stopPrice': stop_loss_price})
-                                exchange_instance.create_order(trading_pair, 'limit', 'sell', order_size, take_profit_price)
-
-                            elif signal == 'short':
-                                print(f'Prodajam na {exchange_instance.name} za valutni par {trading_pair}')
-                                order = exchange_instance.create_market_sell_order(trading_pair, order_size)
-
-                                entry_price = float(order['price'])
-                                stop_loss_price = entry_price * (1 + stop_loss_percent)
-                                take_profit_price = entry_price * (1 - take_profit_percent)
-
-                                exchange_instance.create_order(trading_pair, 'stop_loss_limit', 'buy', order_size, stop_loss_price, {'stopPrice': stop_loss_price})
-                                exchange_instance.create_order(trading_pair, 'limit', 'buy', order_size, take_profit_price)
-
-                            elif signal == 'close':
-                                print(f'Zapiram pozicijo na {exchange_instance.name} za valutni par {trading_pair}')
-                                order = exchange_instance.create_market_sell_order(trading_pair, order_size, {'reduceOnly': True})
-
-                            timestamp = order['timestamp']
-                            price = order['price']
-                            log_trade(timestamp, trading_pair, signal, price)
-                            break
-                        
-                        except Exception as e:
-                            logging.error(f"Error working with {exchange_instance.name} instance: {e}")
-                            if attempt < 2:  # Change 2 to one less than the desired number of retries
-                                print("Retrying after 5 seconds...")
-                                logging.info("Retrying after 5 seconds...")
-                                time.sleep(5)
-                            else:
-                                print("Max retries reached. Skipping this trade.")
-                                logging.warning("Max retries reached. Skipping this trade.")
-                                break
+                    
+                    execute_trade(exchange_instance, signal, trading_pair, side, stop_loss_percent, take_profit_percent)
 
             time.sleep(60)
         except Exception as e:
             logging.error(f"Error in main loop: {e}")
             time.sleep(60)
+
 
 def stop_main_loop():
     global stop_trading
@@ -377,9 +404,20 @@ def create_gui():
     # Create a dropdown menu to select a trading pair
     selected_trading_pair = StringVar()
     combo_trading_pairs = ttk.Combobox(mainframe, textvariable=selected_trading_pair)
+    
+    # Get trading pairs
+    if exchange_instances:
+        trading_pairs = get_trading_pairs(exchange_instances[0])
+    else:
+        print("Seznam exchange_instances je prazen.")
+        trading_pairs = []
+    
     combo_trading_pairs['values'] = trading_pairs
     combo_trading_pairs.grid(column=1, row=3, sticky=W)
-    combo_trading_pairs.current(0)  # Set default selected trading pair
+    
+    if trading_pairs:  # Set default selected trading pair if trading_pairs is not empty
+        combo_trading_pairs.current(0)  
+        
     combo_trading_pairs.bind("<<ComboboxSelected>>", on_trading_pair_selected)
 
     ttk.Button(mainframe, text="Show Graph", command=lambda: plot_price_data(selected_trading_pair.get())).grid(column=5, row=3, sticky=W)
@@ -394,6 +432,7 @@ if __name__ == "__main__":
             print(f"Account {i + 1}:")
             futures_usdt_balance = get_binance_futures_usdt_balance(instance)
             print("Futures USDT Balance:", futures_usdt_balance)
+            trading_pairs = get_trading_pairs(instance)
         except Exception as e:
             logging.error(f"Error checking account balance: {e}")
     create_gui()
