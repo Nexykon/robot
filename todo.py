@@ -144,20 +144,6 @@ total_order_size = 0.01
 stop_loss_percent = 0.009  # 0.9%
 take_profit_percent = 0.004  # 0.4%
 
-def create_binance_order(exchange, symbol, side, order_type, amount, price=None):
-    if order_type == 'market':
-        if side == 'buy':
-            order = exchange.create_market_buy_order(symbol, amount)
-        else:
-            order = exchange.create_market_sell_order(symbol, amount)
-    else:
-        if side == 'buy':
-            order = exchange.create_limit_buy_order(symbol, amount, price)
-        else:
-            order = exchange.create_limit_sell_order(symbol, amount, price)
-
-    return order
-
 def create_bybit_order(exchange, symbol, side, order_type, amount, price=None):
     if order_type == 'market':
         order = exchange.place_active_order(
@@ -358,7 +344,7 @@ def main_loop():
                     print("Odstotek za zaustavitev izgube:", stop_loss_percent)
                     print("Odstotek za dobiček:", take_profit_percent)
                     
-                    execute_trade(exchange_instance, signal, trading_pair, side, stop_loss_percent, take_profit_percent)
+                    execute_trade(exchange_instance, signal, trading_pair, 0.01, stop_loss_percent, take_profit_percent)
 
             time.sleep(60)
         except Exception as e:
